@@ -1,14 +1,13 @@
 #!/bin/bash
-# manifest.sh <rpi-image-gen workroot> <pi-panel-release>
+# manifest.sh <the image root's /var/lib/dpkg> <pi-panel-release>
 #
 # What the image contains, for comparing panels with a release (jazz's
 # drift check) and for review: the release file, the kernel and every
 # installed package with its version.
 set -euo pipefail
 
-status=$(find "$1" -path '*/var/lib/dpkg/status' -not -path '*/proc/*' -print -quit)
-[ -n "$status" ] || { echo "no dpkg status under $1" >&2; exit 1; }
-admin=$(dirname "$status")
+admin=$1
+[ -f "$admin/status" ] || { echo "no dpkg status in $admin" >&2; exit 1; }
 
 echo "# pi-panel-release"
 cat "$2"

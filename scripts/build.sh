@@ -71,7 +71,7 @@ mkdir -p "$WORK" "$OUT" "$CACHE" "$WORK/tmp"
 # rpi-image-gen and genimage stage whole partitions in $TMPDIR; starscream's
 # /tmp is a small tmpfs.
 export TMPDIR=$WORK/tmp
-rm -rf "$SRC" && mkdir -p "$SRC"
+rm -rf -- "${SRC:?}" && mkdir -p "$SRC"
 echo "== pi-panel $VERSION ($VARIANT), work $WORK"
 
 echo "== rpi-image-gen $RIG_COMMIT"
@@ -126,24 +126,28 @@ BUILD_DATE="$BUILD_DATE"
 EOF
 
 echo "== rpi-image-gen build"
-rm -rf "$WORK/build" && mkdir -p "$WORK/build"
+rm -rf -- "${WORK:?}/build" && mkdir -p "$WORK/build"
 "$RIG/rpi-image-gen" build -S "$REPO" -c pi-panel.yaml -B "$WORK/build" -- \
     "IGconf_pipanel_srcdir=$SRC" \
     "IGconf_pipanel_variant=$VARIANT" \
     "IGconf_artefact_version=$VERSION" \
     "IGconf_deploy_compression=none"
 
-img=$(find "$WORK/build" -path '*/deploy-*' -name '*.img' | head -n1)
-[ -n "$img" ] || { echo "no image found under $WORK/build/deploy-*" >&2; exit 1; }
-imgout=$WORK/build/image-pi-panel        # IGconf_image_outputdir: genimage's parts
+# The paths follow IGconf_sys_workroot (-B), IGconf_artefact_version and the
+# image name (no find: parts of the tree are only readable in the build's
+# user namespace).
+img=$WORK/build/deploy-$VERSION/pi-panel.img
+imgout=$WORK/build/image-pi-panel                       # genimage's parts
+rootfs=$WORK/build/chroot-$VERSION/filesystem
+[ -f "$img" ] || { echo "no image at $img" >&2; exit 1; }
 
 echo "== slot size check"
 "$REPO/scripts/check-sizes.sh" "$imgout" 4G 256M
 
 echo "== outputs in $OUT"
-rm -f "$OUT/$NAME".*
+rm -f -- "${OUT:?}/${NAME:?}".*
 xz -T2 -6 -c "$img" > "$OUT/$NAME.img.xz"
-"$REPO/scripts/manifest.sh" "$WORK/build" "$SRC/pi-panel-release" > "$OUT/$NAME.manifest.txt"
+"$REPO/scripts/manifest.sh" "$rootfs/var/lib/dpkg" "$SRC/pi-panel-release" > "$OUT/$NAME.manifest.txt"
 cp "$SRC/pi-panel-release" "$OUT/$NAME.release"
 (cd "$OUT" && sha256sum "$NAME.img.xz" "$NAME.manifest.txt" "$NAME.release" > "$NAME.SHA256SUMS")
 ls -la "$OUT/$NAME".*
