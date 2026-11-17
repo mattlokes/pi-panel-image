@@ -147,7 +147,7 @@ echo "== slot size check"
 echo "== outputs in $OUT"
 rm -f -- "${OUT:?}/${NAME:?}".*
 xz -T2 -6 -c "$img" > "$OUT/$NAME.img.xz"
-"$REPO/scripts/manifest.sh" "$rootfs/var/lib/dpkg" "$SRC/pi-panel-release" > "$OUT/$NAME.manifest.txt"
+"$REPO/scripts/manifest.sh" "$rootfs/usr/share/factory/var/lib/dpkg" "$SRC/pi-panel-release" > "$OUT/$NAME.manifest.txt"
 cp "$SRC/pi-panel-release" "$OUT/$NAME.release"
 (cd "$OUT" && sha256sum "$NAME.img.xz" "$NAME.manifest.txt" "$NAME.release" > "$NAME.SHA256SUMS")
 ls -la "$OUT/$NAME".*

@@ -1,5 +1,8 @@
 #!/bin/bash
-# manifest.sh <the image root's /var/lib/dpkg> <pi-panel-release>
+# manifest.sh <dpkg admin dir> <pi-panel-release>
+#
+# image-rota ships /var as /usr/share/factory/var, so the admin dir of a
+# built root is <root>/usr/share/factory/var/lib/dpkg.
 #
 # What the image contains, for comparing panels with a release (jazz's
 # drift check) and for review: the release file, the kernel and every
