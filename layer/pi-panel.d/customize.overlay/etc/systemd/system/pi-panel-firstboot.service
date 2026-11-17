@@ -1,0 +1,19 @@
+[Unit]
+Description=pi-panel first boot: grow /persistent, import /bootfs/pi-panel
+Documentation=file:/usr/libexec/pi-panel/firstboot
+DefaultDependencies=no
+RequiresMountsFor=/persistent /bootfs /home
+After=local-fs.target persistent-shared-init.service rpi-persist-accounts.service systemd-sysusers.service
+Before=pi-panel.target pi-panel-compositor.service pi-panel-ctl.service iwd.service sshd.service ssh.service systemd-networkd.service
+# Runs until it has succeeded once on this persistent partition, and again
+# whenever a provisioning folder is put on the boot partition.
+ConditionPathExists=|!/persistent/pi-panel/.firstboot-done
+ConditionPathExists=|/bootfs/pi-panel
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pi-panel/firstboot
+
+[Install]
+WantedBy=sysinit.target

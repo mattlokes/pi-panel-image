@@ -1,0 +1,46 @@
+# METABEGIN
+# X-Env-Layer-Name: pi-panel-build
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: Builds pi-panel in place under /opt/pi-panel: the core
+#  (compositor, three venvs) and the apps, installed into the image registry
+#  with pi-panel-pkg. The build tools are purged again on release images.
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: systemd-min
+#
+# X-Env-VarPrefix: pipanel
+#
+# X-Env-Var-srcdir:
+# X-Env-Var-srcdir-Desc: Directory scripts/build.sh prepared: pi-panel-core/
+#  (checked out at its tag), uv and uvx, apps.txt (one url#tag per line) and
+#  pi-panel-release.
+# X-Env-Var-srcdir-Required: y
+# X-Env-Var-srcdir-Valid: dir
+# X-Env-Var-srcdir-Set: y
+#
+# X-Env-Var-variant: release
+# X-Env-Var-variant-Desc: release purges the build tools; dev keeps them.
+# X-Env-Var-variant-Required: n
+# X-Env-Var-variant-Valid: release,dev
+# X-Env-Var-variant-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    # Build only (PACKAGES.md in pi-panel-core). Purged again by
+    # customize90-purge on release images.
+    - libwlroots-0.19-dev
+    - libwayland-dev
+    - libwayland-bin
+    - wayland-protocols
+    - libxkbcommon-dev
+    - libpixman-1-dev
+    - libdrm-dev
+    - meson
+    - ninja-build
+    - pkg-config
+    - gcc
+    - libc6-dev
+    # Also at runtime (listed again by the pi-panel layer, so the purge keeps them)
+    - git
+    - ca-certificates
+    - python3

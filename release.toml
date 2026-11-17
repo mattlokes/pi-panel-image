@@ -1,0 +1,33 @@
+# One pi-panel OS release: the components and tools it is built from.
+# scripts/build.sh reads this. OS versions are CalVer (YYYY.MM.N, with an
+# optional -dev.N suffix); the components keep their own SemVer tags.
+
+version = "2026.11.0"
+
+[rpi-image-gen]
+url = "https://github.com/raspberrypi/rpi-image-gen.git"
+commit = "66666839791bb4bb4008a60fb2812f84e7bc5e99"   # 2026-11-17
+
+[uv]
+version = "0.12.10"   # baked into /usr/local/bin; builds the venvs and on-panel packages
+
+# Forgejo (the primary remote) over https: starscream reaches it, and the URL
+# is what pluginman records as each app's source in the image registry.
+[components.pi-panel-core]
+url = "https://forgejo.matts-homelab.com/matt/pi-panel-core.git"
+tag = "v0.1.0"
+
+[components.pi-panel-immich]
+url = "https://forgejo.matts-homelab.com/matt/pi-panel-immich.git"
+tag = "v0.4.1"
+kind = "app"
+
+[components.pi-panel-now-playing]
+url = "https://forgejo.matts-homelab.com/matt/pi-panel-now-playing.git"
+tag = "v0.2.0"
+kind = "app"
+
+[components.pi-panel-webrtc-client]
+url = "https://forgejo.matts-homelab.com/matt/pi-panel-webrtc-client.git"
+tag = "v0.2.0"
+kind = "app"

@@ -1,0 +1,15 @@
+#!/bin/bash
+# Release images drop the build tools (PACKAGES.md "Build only") once
+# everything is built. The dev variant keeps them.
+set -euo pipefail
+
+root=$1
+[ "${IGconf_pipanel_variant:-release}" = release ] || exit 0
+
+chroot "$root" /usr/bin/env -i PATH=/usr/sbin:/usr/bin DEBIAN_FRONTEND=noninteractive \
+    apt-get purge -y --auto-remove \
+        libwlroots-0.19-dev libwayland-dev libwayland-bin wayland-protocols \
+        libxkbcommon-dev libpixman-1-dev libdrm-dev meson ninja-build gcc libc6-dev
+# The compositor runs from build/; the object files are not needed.
+find "$root/opt/pi-panel/pi-panel-core/pi-panel-core-compositor/build" \
+    -name '*.p' -type d -prune -exec rm -rf {} +

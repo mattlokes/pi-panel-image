@@ -1,0 +1,230 @@
+#!/bin/bash
+# tftp-kernel — manage per-version kernel sets for starscream's TFTP netboot.
+#
+# Layout on the TFTP dataset (firmware's view: /<SERIAL>/...):
+#   /<SERIAL>/start4.elf, fixup4.dat, config.txt, ...   top level (never touched)
+#   /<SERIAL>/kernel8.img, initrd...-iscsi, cmdline.txt  top-level fallback set (never touched)
+#   /<SERIAL>/<kver>/{kernel8.img,initrd.img,cmdline.txt,bcm2711-rpi-4-b.dtb,overlays/}
+# config.txt selects a set with `os_prefix=<kver>/` + `initramfs initrd.img followkernel`.
+# The firmware applies os_prefix to kernel, initramfs, cmdline.txt, DTBs and overlays.
+#
+# Commands (run as root; nothing here runs automatically):
+#   stage <kver>      build /srv/build/tftp-stage/<kver>/ from the installed kernel
+#   publish <kver>    copy a staged set to /<SERIAL>/<kver>/ (also creates the baseline dir once),
+#                     then apt-mark hold + manual its linux-image/headers-<kver> packages
+#   switch <kver>     point config.txt at /<SERIAL>/<kver>/ (backs up config.txt first)
+#   rollback          restore the newest config.txt.<timestamp> backup
+#   status            show the active selection and published sets
+#
+# Settings: /etc/tftp-kernel.conf (TFTP_HOST, SERIAL, SHARE_FSTYPE, SHARE_SRC, SHARE_OPTS,
+#           SHARE_SUBDIR, BASELINE).
+set -euo pipefail
+
+CONF=/etc/tftp-kernel.conf
+TFTP_HOST=192.168.4.140
+SERIAL=702b26f7
+SHARE_FSTYPE=
+SHARE_SRC=
+SHARE_OPTS=
+SHARE_SUBDIR=        # path inside the share that holds the <SERIAL>/ dir ("" = share root)
+SHARE_UID=           # if set, every write to the share runs as this uid (NFS root squash)
+SHARE_GID=
+BASELINE=6.12.47+rpt-rpi-v8
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+STAGE_ROOT=/srv/build/tftp-stage
+MNT=/mnt/tftp
+DTB=bcm2711-rpi-4-b.dtb
+MOUNTED=0
+
+die() { echo "tftp-kernel: $*" >&2; exit 1; }
+log() { echo "==> $*"; }
+
+[ "$(id -u)" = 0 ] || die "run as root"
+
+# W: run a command that writes to the share, as SHARE_UID:SHARE_GID when configured.
+W() {
+  if [ -n "$SHARE_UID" ]; then
+    setpriv --reuid="$SHARE_UID" --regid="${SHARE_GID:-$SHARE_UID}" --clear-groups -- "$@"
+  else "$@"; fi
+}
+
+cleanup() { if [ "$MOUNTED" = 1 ]; then sync; umount "$MNT" && log "unmounted $MNT"; fi; }
+trap cleanup EXIT
+
+mount_share() {
+  [ -n "$SHARE_FSTYPE" ] && [ -n "$SHARE_SRC" ] || die "set SHARE_FSTYPE and SHARE_SRC in $CONF"
+  mountpoint -q "$MNT" && die "$MNT is already mounted; unmount it first"
+  mkdir -p "$MNT"
+  mount -t "$SHARE_FSTYPE" ${SHARE_OPTS:+-o "$SHARE_OPTS"} "$SHARE_SRC" "$MNT"
+  MOUNTED=1
+  DIR="$MNT${SHARE_SUBDIR:+/$SHARE_SUBDIR}/$SERIAL"
+  [ -f "$DIR/config.txt" ] && [ -f "$DIR/start4.elf" ] || die "$DIR doesn't look like the TFTP dir (no config.txt/start4.elf)"
+  log "mounted $SHARE_SRC; TFTP dir is $DIR"
+}
+
+valid_kver() { [[ "$1" =~ ^[A-Za-z0-9._+-]+$ ]] || die "bad kernel version '$1'"; }
+
+sums_ok() { (cd "$1" && sha256sum --quiet -c SHA256SUMS); }
+
+sums_of() { (cd "$1" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' sha256sum); }
+write_sums() { sums_of "$1" > "$1/SHA256SUMS"; }                         # local dirs
+write_sums_share() { sums_of "$1" | W tee "$1/SHA256SUMS" > /dev/null; }  # dirs on the share
+
+cmd_stage() {
+  local k=$1 out tmp lst
+  valid_kver "$k"
+  local src=/usr/lib/linux-image-$k
+  [ -f "/boot/vmlinuz-$k" ] || die "/boot/vmlinuz-$k missing"
+  [ -d "/lib/modules/$k" ] || die "/lib/modules/$k missing"
+  [ -f "$src/broadcom/$DTB" ] || die "$src/broadcom/$DTB missing"
+  [ -d "$src/overlays" ] || die "$src/overlays missing"
+
+  # Same as the hand-built TFTP initrd: an empty iscsi.initramfs forces the open-iscsi hook
+  # to include iSCSI. Real parameters come from cmdline.txt (ISCSI_* variables).
+  if [ ! -e /etc/iscsi/iscsi.initramfs ]; then
+    touch /etc/iscsi/iscsi.initramfs; log "created empty /etc/iscsi/iscsi.initramfs"
+  fi
+
+  out=$STAGE_ROOT/$k; tmp=$out.tmp
+  rm -rf "$tmp"; mkdir -p "$tmp"
+  log "building initrd for $k"
+  mkinitramfs -o "$tmp/initrd.img" "$k"
+
+  lst=$(lsinitramfs "$tmp/initrd.img")
+  local need missing=0
+  for need in 'usr/sbin/iscsistart$' 'scripts/local-top/iscsi$' '/iscsi_tcp\.ko' '/libiscsi\.ko' '/libiscsi_tcp\.ko' 'etc/iscsi\.initramfs$'; do
+    grep -qE "$need" <<<"$lst" || { echo "MISSING in initrd: $need" >&2; missing=1; }
+  done
+  if ! grep -q '/genet\.ko' "/lib/modules/$k/modules.builtin" && ! grep -qE '/genet\.ko' <<<"$lst"; then
+    echo "MISSING: genet (Pi 4 Ethernet) neither built in nor in initrd" >&2; missing=1
+  fi
+  if ! grep -q '/ext4\.ko' "/lib/modules/$k/modules.builtin" && ! grep -qE '/ext4\.ko' <<<"$lst"; then
+    echo "MISSING: ext4 neither built in nor in initrd" >&2; missing=1
+  fi
+  [ "$missing" = 0 ] || { rm -rf "$tmp"; die "initrd for $k is not iSCSI-netboot capable; refusing"; }
+
+  cp "/boot/vmlinuz-$k" "$tmp/kernel8.img"
+  cp "$src/broadcom/$DTB" "$tmp/"
+  cp -r "$src/overlays" "$tmp/overlays"
+  log "fetching live cmdline.txt from tftp://$TFTP_HOST/$SERIAL/"
+  curl -sS --fail -o "$tmp/cmdline.txt" "tftp://$TFTP_HOST/$SERIAL/cmdline.txt"
+  grep -q 'ISCSI_TARGET_NAME=' "$tmp/cmdline.txt" || die "fetched cmdline.txt has no ISCSI_TARGET_NAME"
+
+  write_sums "$tmp"
+  rm -rf "$out"; mv "$tmp" "$out"
+  log "staged $out"
+  ls -la "$out"; echo "overlays: $(ls "$out/overlays" | wc -l) files"
+  grep -vE 'overlays/' "$out/SHA256SUMS"
+}
+
+publish_baseline() {
+  # One-off: copy the current top-level fallback set into $DIR/$BASELINE/ so it can be
+  # selected with os_prefix too. Only if the top-level kernel really is $BASELINE.
+  local b=$DIR/$BASELINE tmp initrd
+  [ -d "$b" ] && return 0
+  [ -f "/boot/vmlinuz-$BASELINE" ] || die "/boot/vmlinuz-$BASELINE missing; can't verify baseline"
+  cmp -s "$DIR/kernel8.img" "/boot/vmlinuz-$BASELINE" || die "top-level kernel8.img is not $BASELINE; not creating baseline dir"
+  initrd=$(sed -nE 's/^initramfs[[:space:]]+([^[:space:]]+).*/\1/p' "$DIR/config.txt" | tail -1)
+  [ -n "$initrd" ] && [ -f "$DIR/$initrd" ] || die "can't find the top-level initramfs named in config.txt"
+  log "creating baseline set $b from top-level files (initrd: $initrd)"
+  tmp=$b.tmp; W rm -rf "$tmp"; W mkdir "$tmp"
+  W cp "$DIR/kernel8.img" "$DIR/cmdline.txt" "$DIR/$DTB" "$tmp/"
+  W cp "$DIR/$initrd" "$tmp/initrd.img"
+  W cp -r "$DIR/overlays" "$tmp/overlays"
+  write_sums_share "$tmp"
+  W mv "$tmp" "$b"
+  sums_ok "$b" || die "baseline copy verification failed"
+  log "baseline $b verified"
+}
+
+cmd_publish() {
+  local k=$1 st dest tmp
+  valid_kver "$k"
+  st=$STAGE_ROOT/$k
+  [ -f "$st/SHA256SUMS" ] || die "nothing staged for $k (run: tftp-kernel stage $k)"
+  sums_ok "$st" || die "staged set $st fails its checksums"
+  mount_share
+  publish_baseline
+  dest=$DIR/$k
+  if [ -d "$dest" ]; then
+    if cmp -s "$st/SHA256SUMS" "$dest/SHA256SUMS" && sums_ok "$dest"; then
+      log "$dest already published and identical"; pin_kernel_pkgs "$k"; return 0
+    fi
+    die "$dest exists and differs; remove it by hand if you mean to replace it"
+  fi
+  tmp=$dest.tmp; W rm -rf "$tmp"
+  W cp -r "$st" "$tmp"
+  sums_ok "$tmp" || die "copy to share failed verification"
+  W mv "$tmp" "$dest"
+  log "published $dest (verified)"
+  pin_kernel_pkgs "$k"
+  ls "$DIR"
+}
+
+# A published set's kernel8.img must keep matching /lib/modules/<kver> on the rootfs, so its
+# versioned packages are held (no same-version rebuild can replace the modules) and marked
+# manual (autoremove can't purge them when the metapackage moves on). Unpin by hand when
+# the set is retired from TFTP.
+pin_kernel_pkgs() {
+  local k=$1 p pkgs=()
+  for p in "linux-image-$k" "linux-headers-$k"; do
+    dpkg-query -W -f='${db:Status-Abbrev}' "$p" 2>/dev/null | grep -q '^ii' && pkgs+=("$p")
+  done
+  [ ${#pkgs[@]} -gt 0 ] || { log "no installed packages for $k to pin"; return 0; }
+  apt-mark manual "${pkgs[@]}" >/dev/null
+  apt-mark hold "${pkgs[@]}"
+}
+
+set_selection() {  # $1 = kver dir name; edits $DIR/config.txt
+  local k=$1 cfg=$DIR/config.txt bak new
+  for f in kernel8.img initrd.img cmdline.txt "$DTB"; do
+    [ -f "$DIR/$k/$f" ] || die "$DIR/$k/$f missing"
+  done
+  [ -d "$DIR/$k/overlays" ] || die "$DIR/$k/overlays missing"
+  sums_ok "$DIR/$k" || die "$DIR/$k fails its checksums"
+  bak=$cfg.$(date +%Y%m%d-%H%M%S)
+  W cp -p "$cfg" "$bak"; log "backed up config.txt -> $(basename "$bak")"
+  new=$(mktemp)
+  grep -vE '^[[:space:]]*(os_prefix=|initramfs[[:space:]])' "$cfg" > "$new"
+  # make sure the lines we add land in an [all] section
+  [ "$(grep -E '^\[' "$new" | tail -1)" = "[all]" ] || printf '\n[all]\n' >> "$new"
+  printf 'os_prefix=%s/\ninitramfs initrd.img followkernel\n' "$k" >> "$new"
+  diff -u "$bak" "$new" || true
+  W tee "$cfg" < "$new" > /dev/null; rm -f "$new"
+  grep -qx "os_prefix=$k/" "$cfg" || die "config.txt write did not take"
+  log "config.txt now selects $k/"
+}
+
+cmd_switch() { valid_kver "$1"; mount_share; set_selection "$1"; }
+
+cmd_rollback() {
+  mount_share
+  local cfg=$DIR/config.txt bak
+  bak=$(ls -1 "$cfg".2* 2>/dev/null | LC_ALL=C sort | tail -1) || true
+  [ -n "$bak" ] || die "no config.txt.<timestamp> backups found"
+  W cp -p "$cfg" "$cfg.pre-rollback"
+  diff -u "$cfg" "$bak" || true
+  W tee "$cfg" < "$bak" > /dev/null
+  cmp -s "$cfg" "$bak" || die "config.txt write did not take"
+  log "restored $(basename "$bak") (previous config kept as config.txt.pre-rollback)"
+}
+
+cmd_status() {
+  mount_share
+  echo "--- selection in config.txt:"; grep -nE '^[[:space:]]*(os_prefix=|initramfs[[:space:]]|\[)' "$DIR/config.txt" || true
+  echo "--- published sets:"
+  local d; for d in "$DIR"/*/; do [ -f "$d/SHA256SUMS" ] && echo "  $(basename "$d")"; done
+  echo "--- config backups:"; { ls -1 "$DIR"/config.txt.* 2>/dev/null || true; } | xargs -r -n1 basename
+  echo "--- running kernel: $(uname -r)"
+}
+
+case "${1:-}" in
+  stage)    [ $# = 2 ] || die "usage: tftp-kernel stage <kver>";   cmd_stage "$2" ;;
+  publish)  [ $# = 2 ] || die "usage: tftp-kernel publish <kver>"; cmd_publish "$2" ;;
+  switch)   [ $# = 2 ] || die "usage: tftp-kernel switch <kver>";  cmd_switch "$2" ;;
+  rollback) cmd_rollback ;;
+  status)   cmd_status ;;
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

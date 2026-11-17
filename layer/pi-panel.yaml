@@ -1,0 +1,52 @@
+# METABEGIN
+# X-Env-Layer-Name: pi-panel
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: The pi-panel system: runtime packages, the pi-panel
+#  service user, pi-panel-core's deploy/install.sh, first-boot provisioning
+#  and /etc/pi-panel-release.
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: pi-panel-build,device-user-admin,systemd-min
+#
+# X-Env-VarPrefix: pipanel
+#
+# X-Env-Var-uid: 900
+# X-Env-Var-uid-Desc: Fixed UID/GID of the pi-panel user and group, so
+#  ownership on /persistent survives updates and re-flashes.
+# X-Env-Var-uid-Required: n
+# X-Env-Var-uid-Valid: int:100-999
+# X-Env-Var-uid-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    # pi-panel-core runtime (PACKAGES.md)
+    - libwlroots-0.19          # compositor; brings Mesa
+    - git                      # pi-panel-pkg
+    - python3
+    - python3-gi               # welcome screen (PyGObject via the venv's system site-packages)
+    - gir1.2-gtk-4.0
+    - polkitd                  # lets pi-panel and its group manage pi-panel-* units
+    - libpam-systemd           # the compositor's logind session on tty1
+    - dbus                     # ctl drives systemd over the system bus
+    - xkb-data
+    - curl
+    - ca-certificates
+    - fonts-dejavu-core        # GTK and the compositor's fallback font
+    # first boot
+    - cloud-guest-utils        # growpart
+    - e2fsprogs
+    # pi-panel-immich [system]
+    - libegl1
+    - libgl1
+    - libwayland-egl1
+    - libwayland-cursor0
+    # pi-panel-now-playing [system] is python3-gi + gir1.2-gtk-4.0 (above)
+    # pi-panel-webrtc-client [system]
+    - python3-gst-1.0
+    - python3-gi-cairo
+    - gir1.2-pango-1.0
+    - gir1.2-gst-plugins-bad-1.0
+    - gstreamer1.0-plugins-bad
+    - gstreamer1.0-plugins-good
+    - gstreamer1.0-libav
+    - gstreamer1.0-nice

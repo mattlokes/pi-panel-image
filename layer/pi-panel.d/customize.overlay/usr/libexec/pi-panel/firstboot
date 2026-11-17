@@ -1,0 +1,103 @@
+#!/bin/bash
+# pi-panel first boot (pi-panel-firstboot.service).
+#
+# 1. Grow the persistent partition (the last one) and its filesystem to fill
+#    the drive, and cut ext4's root reservation to 1%: the panel doesn't run
+#    as root.
+# 2. Make sure /persistent/pi-panel is there and owned right (a re-created
+#    partition starts empty).
+# 3. Import /bootfs/pi-panel/ if present, then delete it (it holds secrets):
+#      panel.toml, compositor.env, apps/, plugins/   -> /persistent/pi-panel/config
+#      authorized_keys                               -> the login user's ~/.ssh
+#      password-hash        (a crypt(3) hash, e.g. `openssl passwd -6`)
+#                                                     -> the login user's password
+#      hostname                                      -> /etc/hostname
+#      wifi/*.psk, wifi/*.open                       -> /var/lib/iwd (iwd profiles)
+set -euo pipefail
+
+P=/persistent/pi-panel
+PROV=/bootfs/pi-panel
+LOGIN=$(getent group pi-panel | cut -d: -f4 | tr ',' '\n' | grep -v '^pi-panel$' | head -n1 || true)
+log() { echo "pi-panel-firstboot: $*"; }
+
+grow() {
+    local part disk num
+    part=$(findmnt -no SOURCE /persistent)
+    part=$(readlink -f "$part")
+    disk=/dev/$(lsblk -no PKNAME "$part")
+    num=$(cat "/sys/class/block/$(basename "$part")/partition")
+    if growpart "$disk" "$num"; then
+        resize2fs "$part"
+        log "grew $part to fill $disk"
+    else
+        log "$part already fills $disk"      # growpart exits 1 for NOCHANGE
+    fi
+    tune2fs -m 1 "$part" >/dev/null
+}
+
+layout() {
+    install -d -m 0755 "$P"
+    install -d -m 0750 -o pi-panel -g pi-panel "$P/home"
+    for d in "$P/config" "$P/state"; do
+        install -d -m 2770 -o pi-panel -g pi-panel "$d"
+    done
+}
+
+import() {
+    [ -d "$PROV" ] || return 0
+    log "importing $PROV"
+    local f
+    for f in panel.toml compositor.env; do
+        if [ -f "$PROV/$f" ]; then
+            install -m 0660 -o pi-panel -g pi-panel "$PROV/$f" "$P/config/$f"
+            log "  $f"
+        fi
+    done
+    for d in apps plugins; do
+        if [ -d "$PROV/$d" ]; then
+            cp -r "$PROV/$d" "$P/config/"
+            chown -R pi-panel:pi-panel "$P/config/$d"
+            chmod -R u=rwX,g=rwX,o= "$P/config/$d"
+            find "$P/config/$d" -type d -exec chmod g+s {} +
+            log "  $d/"
+        fi
+    done
+    if [ -n "$LOGIN" ]; then
+        local home
+        home=$(getent passwd "$LOGIN" | cut -d: -f6)
+        if [ -f "$PROV/authorized_keys" ]; then
+            install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$home/.ssh"
+            install -m 0600 -o "$LOGIN" -g "$LOGIN" "$PROV/authorized_keys" "$home/.ssh/authorized_keys"
+            log "  authorized_keys for $LOGIN"
+        fi
+        if [ -f "$PROV/password-hash" ]; then
+            printf '%s:%s\n' "$LOGIN" "$(head -n1 "$PROV/password-hash")" | chpasswd -e
+            log "  password for $LOGIN"
+        fi
+    fi
+    if [ -f "$PROV/hostname" ]; then
+        local name
+        name=$(head -n1 "$PROV/hostname" | tr -cd 'A-Za-z0-9-')
+        if [ -n "$name" ]; then
+            echo "$name" > /etc/hostname
+            hostname "$name"
+            log "  hostname $name"
+        fi
+    fi
+    if [ -d "$PROV/wifi" ]; then
+        install -d -m 0700 /var/lib/iwd
+        for f in "$PROV"/wifi/*.psk "$PROV"/wifi/*.open; do
+            [ -f "$f" ] || continue
+            install -m 0600 "$f" /var/lib/iwd/
+            log "  wifi $(basename "$f")"
+        done
+    fi
+    rm -rf "$PROV"
+    sync
+    log "removed $PROV"
+}
+
+grow
+layout
+import
+touch "$P/.firstboot-done"

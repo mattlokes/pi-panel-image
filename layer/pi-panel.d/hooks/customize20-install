@@ -1,0 +1,35 @@
+#!/bin/bash
+# The service user (fixed IDs), then pi-panel-core's own install.sh, which
+# finds the user already there and does the rest: units, PAM, polkit, the
+# commands in /usr/local/bin, linger and the /persistent/pi-panel tree.
+set -euo pipefail
+
+root=$1
+uid=${IGconf_pipanel_uid:-900}
+login=${IGconf_device_user1:-pi}
+src=${IGconf_pipanel_srcdir:?}
+
+# systemd-sysusers re-creates the user if a restored /etc/passwd (accounts
+# persist on /persistent) predates it, e.g. after an update that adds it.
+install -d -m 0755 "$root/usr/lib/sysusers.d"
+cat > "$root/usr/lib/sysusers.d/pi-panel.conf" <<EOT
+g pi-panel $uid
+u pi-panel $uid:$uid "pi-panel" /persistent/pi-panel/home /usr/sbin/nologin
+m pi-panel video
+m pi-panel render
+m pi-panel input
+m $login pi-panel
+EOT
+
+chroot "$root" /bin/sh -eu <<EOCHROOT
+getent group pi-panel >/dev/null || groupadd --system --gid $uid pi-panel
+getent passwd pi-panel >/dev/null || useradd --system --uid $uid --gid pi-panel \
+    --home-dir /persistent/pi-panel/home --no-create-home --shell /usr/sbin/nologin \
+    --comment pi-panel pi-panel
+PI_PANEL_LOGIN_USER=$login /opt/pi-panel/pi-panel-core/deploy/install.sh
+EOCHROOT
+
+# What this image is: read by the welcome screen, support and (plan 5) updates.
+install -m 0644 "$src/pi-panel-release" "$root/etc/pi-panel-release"
+
+systemctl --root="$root" enable pi-panel-firstboot.service

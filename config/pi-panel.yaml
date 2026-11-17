@@ -1,0 +1,20 @@
+# The pi-panel release image: Raspberry Pi 5, Debian trixie minbase, GPT A/B
+# (image-rota), read-only erofs root, everything writable on /persistent.
+# Built by scripts/build.sh, which passes the IGconf_pipanel_* values.
+include:
+  file: trixie-minbase-ab.yaml
+
+device:
+  user1: pi             # the login user; it joins the pi-panel group
+
+image:
+  name: pi-panel
+  rootfs_type: erofs
+  # Slots can't be resized by an update, so these are generous; see the README
+  # (16 GB is the smallest supported drive).
+  system_part_size: 4G
+  boot_part_size: 256M
+  data_part_size: 1G    # grown to fill the drive on first boot
+
+layer:
+  app: pi-panel

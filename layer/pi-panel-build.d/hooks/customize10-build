@@ -1,0 +1,43 @@
+#!/bin/bash
+# Build pi-panel in place in the target root: the venvs carry absolute
+# shebangs and meson bakes the clock font's path, so nothing is built
+# elsewhere and copied (pi-panel-core's layout contract).
+set -euo pipefail
+
+root=$1
+src=${IGconf_pipanel_srcdir:?}
+
+install -d -m 0755 "$root/opt/pi-panel"
+cp -a "$src/pi-panel-core" "$root/opt/pi-panel/"
+install -m 0755 "$src/uv" "$src/uvx" "$root/usr/local/bin/"
+install -m 0644 "$src/apps.txt" "$root/tmp/pi-panel-apps.txt"
+
+# The build runs as root in the chroot, with network (uv, git). Nothing in
+# /opt/pi-panel is written at runtime: the image root is read-only.
+chroot "$root" /usr/bin/env -i \
+    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin \
+    LANG=C.UTF-8 UV_CACHE_DIR=/tmp/uv-cache UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy /bin/bash -euo pipefail <<'EOCHROOT'
+core=/opt/pi-panel/pi-panel-core
+cd "$core/pi-panel-core-compositor"
+meson setup build --buildtype=release
+ninja -C build -j2
+cd "$core/pi-panel-core-ctl"       && uv sync --frozen --compile-bytecode --all-packages
+cd "$core/pi-panel-core-pluginman" && uv sync --frozen --compile-bytecode
+cd "$core/pi-panel-core-welcome"   && uv venv --system-site-packages --python /usr/bin/python3 --allow-existing \
+                                   && uv sync --frozen --compile-bytecode
+
+# The apps, by their recorded source (url#tag), into the image registry.
+while read -r app; do
+    [ -n "$app" ] || continue
+    "$core/pi-panel-core-pluginman/.venv/bin/pi-panel-pkg" install --image -y "$app"
+done < /tmp/pi-panel-apps.txt
+rm -rf /tmp/uv-cache /tmp/pi-panel-apps.txt
+EOCHROOT
+
+# CPU-specific flags would tie the build to starscream's Pi 4 (see CI).
+if grep -qE -e '-m(arch|cpu|tune)\b|=native\b' \
+        "$root/opt/pi-panel/pi-panel-core/pi-panel-core-compositor/build/build.ninja"; then
+    echo "pi-panel-build: CPU-specific flags in the compositor build" >&2
+    exit 1
+fi
