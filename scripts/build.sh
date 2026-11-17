@@ -67,7 +67,10 @@ NAME=pi-panel-$VERSION-rpi5
 SRC=$WORK/src
 RIG=$WORK/rpi-image-gen
 CACHE=$WORK/cache
-mkdir -p "$WORK" "$OUT" "$CACHE"
+mkdir -p "$WORK" "$OUT" "$CACHE" "$WORK/tmp"
+# rpi-image-gen and genimage stage whole partitions in $TMPDIR; starscream's
+# /tmp is a small tmpfs.
+export TMPDIR=$WORK/tmp
 rm -rf "$SRC" && mkdir -p "$SRC"
 echo "== pi-panel $VERSION ($VARIANT), work $WORK"
 

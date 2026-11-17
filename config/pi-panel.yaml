@@ -6,6 +6,7 @@ include:
 
 device:
   user1: pi             # the login user; it joins the pi-panel group
+  user1sudo: passwd     # sudo with its password (set through provisioning)
 
 image:
   name: pi-panel

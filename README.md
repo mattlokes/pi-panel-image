@@ -71,8 +71,9 @@ pi-panel/
   wifi/<SSID>.psk       # iwd profiles: [Security] Passphrase=…
 ```
 
-The login user is `pi` (`device.user1` in `config/pi-panel.yaml`); without
-`authorized_keys` or `password-hash` it can't log in. Raspberry Pi Imager's
+The login user is `pi` (`device.user1` in `config/pi-panel.yaml`), with
+sudo by password. Without `authorized_keys` or `password-hash` it can't log
+in, and without `password-hash` it has no sudo. Raspberry Pi Imager's
 OS customisation writes cloud-init/firstrun files that this minbase image
 does not run, so the folder is the way to provision.
 
