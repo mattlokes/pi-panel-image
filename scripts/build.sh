@@ -90,7 +90,9 @@ for n in $APP_NAMES; do
     key=${n^^}; key=${key//-/_}
     url_var=URL_$key; tag_var=TAG_$key
     # Only to record the commit: pi-panel-pkg fetches it again in the chroot.
-    commit=$(git ls-remote "${!url_var}" "refs/tags/${!tag_var}^{}" "refs/tags/${!tag_var}" | head -n1 | cut -f1)
+    # An annotated tag's ^{} line is the commit; a lightweight tag only has the plain line.
+    commit=$(git ls-remote "${!url_var}" "refs/tags/${!tag_var}" "refs/tags/${!tag_var}^{}" \
+             | sort -k2 | tail -n1 | cut -f1)
     [ -n "$commit" ] || { echo "tag ${!tag_var} not found in ${!url_var}" >&2; exit 1; }
     echo "${!url_var}#${!tag_var}" >> "$SRC/apps.txt"
     COMPONENTS="$COMPONENTS $n=${!tag_var}@$commit"
@@ -121,7 +123,7 @@ BUILD_DATE="$BUILD_DATE"
 EOF
 
 echo "== rpi-image-gen build"
-rm -rf "$WORK/build"
+rm -rf "$WORK/build" && mkdir -p "$WORK/build"
 "$RIG/rpi-image-gen" build -S "$REPO" -c pi-panel.yaml -B "$WORK/build" -- \
     "IGconf_pipanel_srcdir=$SRC" \
     "IGconf_pipanel_variant=$VARIANT" \
