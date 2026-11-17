@@ -1,7 +1,7 @@
 # starscream: the pi-panel CI runner
 
 This is how the Forgejo Actions runner for pi-panel is set up.
-- It lives at `/srv/build/runner-notes/` for now. In plan 4 it moves into `pi-panel-image/runner/`, together with `tftp-kernel`.
+- It lives in `pi-panel-image/runner/` (moved from `/srv/build/runner-notes/` in plan 4), together with `tftp-kernel/`. The copies on starscream are the old ones.
 - It was written during plan 1, Step 2, on 2026-11-08.
 
 ## Host
@@ -67,6 +67,38 @@ UV_CACHE_DIR: /var/lib/forgejo-runner/cache/uv   # on the USB disk, not the 8G r
 ```
 
 Apply changes with `sudo systemctl restart forgejo-runner`, then check that it logs "declared successfully".
+
+## Image builds (plan 4, 2026-11-17)
+
+rpi-image-gen at the commit in `release.toml`, in `/srv/build/rig-work/rpi-image-gen`.
+- `sudo rpi-image-gen/install_deps.sh` added 85 packages (`dpkg-before-rig.txt`
+  and `dpkg-after-rig.txt` in `/srv/build/rig-work`), with podman for its
+  `podman unshare` namespaces. No `linux-*` or `rpi-eeprom` package changed.
+- `/srv/build/rig-work` (work) and `/srv/build/rig-out` (images) are owned by
+  `matt`, who runs the manual builds; `matt` has subuid/subgid `100000:65536`
+  and linger, so a build runs as a `systemd-run --user` unit.
+- rpi-image-gen builds its own erofs-utils, genimage, zstd, util-linux and
+  bdebstrap into its work tree, so host versions of those don't matter.
+
+```
+aardvark-dns arch-test autoconf automake autopoint autotools-dev btrfs-progs 
+buildah catatonit cmake cmake-data conmon containernetworking-plugins 
+containers-storage criu crun cryptsetup cryptsetup-bin dctrl-tools flex 
+fuse-overlayfs fuse3 golang-github-containers-common 
+golang-github-containers-image javascript-common libarchive13t64 libcompel1 
+libcriu2 libdistro-info-perl libexpat1-dev libexpat1 libfl-dev libfl2 
+libflac14 libjs-jquery libjs-sphinxdoc libjs-underscore libjson-c5 
+libjsoncpp26 libltdl-dev libltdl7 libnet1 libprotobuf-c1 libprotobuf32t64 
+libpython3-dev libpython3.13-dev libreiserfscore0t64 librhash1 libslirp0 
+libsubid5 libtool libyajl2 m4 mmdebstrap mtools netavark passt podman pv 
+python3-arrow python3-attr python3-dateutil python3-debian python3-dev 
+python3-fqdn python3-isoduration python3-json-pointer python3-jsonschema 
+python3-jsonschema-specifications python3-pip python3-protobuf python3-pycriu 
+python3-referencing python3-rfc3339-validator python3-rfc3986-validator 
+python3-rfc3987 python3-rpds-py python3-typeshed python3-uritemplate 
+python3-webcolors python3-wheel python3.13-dev slirp4netns uidmap 
+uuid-runtime 
+```
 
 ## Rules
 
