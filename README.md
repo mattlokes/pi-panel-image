@@ -39,6 +39,18 @@ It writes to `/srv/build/rig-out`:
 - `….release`: `/etc/pi-panel-release` of the image
 - `….SHA256SUMS`
 
+### Measured (2026.11.0, 2026-11-17, starscream)
+
+| | |
+|---|---|
+| build (`rpi-image-gen build`) | 20 min, with rpi-image-gen's own tools already built (about 3 min more on a fresh work dir) |
+| `xz -T2 -6` of the 9.5 GiB image | about 9 min |
+| memory | at most 53 MB of swap used; 1.8 GiB RAM is enough |
+| root filesystem | 1.5 GB as files, 631 MB as erofs: 15% of the 4G slot |
+| boot files | 55 MB: 21% of the 256M slot (one kernel, `kernel_2712`, 6.18.60) |
+| packages | 602 (`….manifest.txt`); no build tools left after the purge |
+| `.img.xz` | 1.19 GB |
+
 `release.toml` pins everything: rpi-image-gen's commit, uv, and each
 component's tag. Component tags are pushed before a build; the build fetches
 them from Forgejo.
